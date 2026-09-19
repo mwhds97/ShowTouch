@@ -1,0 +1,17 @@
+Source review for 0.3.7:
+- One existing UIApplication sendEvent hook; original event delivery unchanged.
+- Capture-before/paint-after ordering, generation guard and weak touch/window
+  references from 0.3.6 are unchanged.
+- STCurrentOwnership returns before private calls in non-SpringBoard processes.
+- The private query is guarded; missing API falls back to 0.3.6 behavior.
+- Ownership is read after original dispatch and checked before create/update
+  and while pruning existing markers, including a Home Screen to app transition.
+- System UI recognition does not permit generic SpringBoard, FrontBoard,
+  home-screen or switcher hosting classes while a foreign app is foreground.
+- All original input forwarding and disabled-state paths are unchanged.
+- Diagnostic labels use the existing CATextLayer, default off, and identify
+  version/process/window/touch; normal coordinate-label formatting is preserved.
+- Settings and Control Center controllers are byte-identical to 0.3.6.
+- All 13 original preference specifiers match exactly; one new boolean is added.
+- Regression and binary checks do not establish which process drew the dot in
+  the supplied recording or prove actual UIKit behavior on iOS 14.8.

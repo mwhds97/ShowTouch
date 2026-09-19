@@ -1,0 +1,183 @@
+--- 0.3.6/Sources/ShowTouchRuntime.m
++++ 0.3.7/Sources/ShowTouchRuntime.m
+@@ -1,4 +1,4 @@
+-// ShowTouch 0.3.6 compatibility runtime. Original project: p-x9 (MIT).
++// ShowTouch 0.3.7 compatibility runtime. Original project: p-x9 (MIT).
+ // Draw only with layers. Never insert a tracking UIView into an app window,
+ // create marker UIWindows, change a root controller, or poll with a display link.
+ #import <UIKit/UIKit.h>
+@@ -7,6 +7,18 @@
+ #import <objc/runtime.h>
+ #import <substrate.h>
+ #import <math.h>
++#import <unistd.h>
++#import "STTouchOwnership.h"
++
++// Read-only SpringBoard selector declared in the Theos SpringBoard headers.
++// Query it only in SpringBoard, after checking availability; no extra hook.
++@interface UIApplication (P9ShowTouchSpringBoardState)
++- (id)_accessibilityFrontMostApplication;
++@end
++
++@protocol P9ShowTouchApplicationIdentity
++- (NSString *)bundleIdentifier;
++@end
+ 
+ static NSString *const STPrefsPath = @"/var/mobile/Library/Preferences/com.p-x9.showtouch.pref.plist";
+ static CFStringRef const STPrefsChanged = CFSTR("com.p-x9.showtouch.prefschanged");
+@@ -24,6 +36,8 @@
+                               0xAA0000FF, 0x000000FF, 0x000000FF, 0 };
+ static BOOL STHookInstalled;
+ static BOOL STHandlingEvent;
++static BOOL STSpringBoardProcess;
++static BOOL STShowRendererSource;
+ static NSUInteger STEventGeneration;
+ static void (*STOriginalSendEvent)(UIApplication *, SEL, UIEvent *);
+ 
+@@ -131,6 +145,7 @@
+     STConfig.shadowRadius = STNumber(values[@"shadowRadius"], STConfig.shadowRadius, 0, 10);
+     STConfig.shadowOffset = STPoint(values[@"shadowOffset"], STConfig.shadowOffset);
+     STConfig.coordinates = STBool(values[@"isShowLocation"], STConfig.coordinates);
++    STShowRendererSource = STBool(values[@"showRendererSource"], STShowRendererSource);
+     id mode = values[@"displayMode"];
+     if ([mode isKindOfClass:NSNumber.class]) {
+         NSInteger raw = [mode integerValue];
+@@ -152,6 +167,52 @@
+     return YES;
+ }
+ 
++static STTouchOwnership STCurrentOwnership(void) {
++    STTouchOwnership owner = { STSpringBoardProcess, false, false };
++    if (!owner.springBoard) return owner;
++    UIApplication *application = UIApplication.sharedApplication;
++    if (![application respondsToSelector:@selector(_accessibilityFrontMostApplication)]) {
++        static BOOL reported;
++        if (!reported) {
++            reported = YES;
++            NSLog(@"[ShowTouch 0.3.7] SpringBoard foreground query is unavailable.");
++        }
++        return owner;
++    }
++    owner.foregroundKnown = true;
++    id<P9ShowTouchApplicationIdentity, NSObject> foreground = [application _accessibilityFrontMostApplication];
++    owner.foreignAppForeground = foreground != nil;
++    if ([foreground respondsToSelector:@selector(bundleIdentifier)] &&
++        [[foreground bundleIdentifier] isEqualToString:@"com.apple.springboard"])
++        owner.foreignAppForeground = false;
++    return owner;
++}
++
++static BOOL STObjectIsSystemUI(id object) {
++    for (Class type = object_getClass(object); type; type = class_getSuperclass(type))
++        if (STTouchIsSystemUIClass(class_getName(type))) return YES;
++    return NO;
++}
++
++static BOOL STTouchTargetsSystemUI(UITouch *touch, UIWindow *window) {
++    if (STObjectIsSystemUI(window)) return YES;
++    UIResponder *responder = touch.view;
++    // Bound the traversal, including a defensive check for a self-loop.
++    for (NSUInteger depth = 0; responder && depth < 64; ++depth) {
++        if (STObjectIsSystemUI(responder)) return YES;
++        UIResponder *next = responder.nextResponder;
++        if (next == responder) break;
++        responder = next;
++    }
++    return NO;
++}
++
++static BOOL STMayDrawTouch(UITouch *touch, UIWindow *window, STTouchOwnership owner) {
++    if (!touch || !window || touch.window != window || !STShouldDisplay(window)) return NO;
++    if (STTouchOwnershipAllows(owner, false)) return YES;
++    return STTouchOwnershipAllows(owner, STTouchTargetsSystemUI(touch, window));
++}
++
+ static void STRemoveKey(NSValue *key) {
+     [STMarkers[key] remove];
+     [STMarkers removeObjectForKey:key];
+@@ -165,11 +226,12 @@
+ }
+ 
+ static void STPruneMarkers(void) {
++    STTouchOwnership owner = STCurrentOwnership();
+     for (NSValue *key in STMarkers.allKeys) {
+         STTouchMarker *marker = STMarkers[key];
+         UITouch *touch = marker.touch;
+         UIWindow *window = marker.window;
+-        if (!touch || !STShouldDisplay(window) || touch.window != window ||
++        if (!STMayDrawTouch(touch, window, owner) ||
+             touch.phase == UITouchPhaseEnded || touch.phase == UITouchPhaseCancelled) {
+             STRemoveKey(key);
+         }
+@@ -200,11 +262,34 @@
+     if (dot.superlayer != window.layer) [window.layer addSublayer:dot];
+ 
+     CATextLayer *label = marker.label;
+-    if (STConfig.coordinates) {
++    if (STConfig.coordinates || STShowRendererSource) {
+         label.contentsScale = window.screen.scale;
+         label.foregroundColor = [UIColor.labelColor resolvedColorWithTraitCollection:window.traitCollection].CGColor;
+-        label.string = [NSString stringWithFormat:@"x: %.1f\ny: %.1f", marker.location.x, marker.location.y];
+-        label.frame = CGRectMake(center.x - 55, center.y - radius - STConfig.shadowRadius - 28, 110, 28);
++        if (STShowRendererSource) {
++            NSString *source = [NSString stringWithFormat:@"0.3.7 %@ (%d)\n%@ %p\ntouch %p",
++                NSProcessInfo.processInfo.processName, getpid(), NSStringFromClass(window.class),
++                (__bridge void *)window, (__bridge void *)marker.touch];
++            if (STConfig.coordinates) source = [source stringByAppendingFormat:@"\nx: %.1f  y: %.1f",
++                marker.location.x, marker.location.y];
++            label.string = source;
++            label.fontSize = 9;
++            label.wrapped = YES;
++            label.backgroundColor = [[UIColor.secondarySystemBackgroundColor
++                resolvedColorWithTraitCollection:window.traitCollection] colorWithAlphaComponent:0.9].CGColor;
++            CGFloat width = fmin(320, CGRectGetWidth(window.bounds));
++            CGFloat height = fmin(STConfig.coordinates ? 74 : 60, CGRectGetHeight(window.bounds));
++            CGFloat x = fmax(CGRectGetMinX(window.bounds), fmin(center.x - width / 2,
++                CGRectGetMaxX(window.bounds) - width));
++            CGFloat y = fmax(CGRectGetMinY(window.bounds), fmin(center.y - radius - height - 4,
++                CGRectGetMaxY(window.bounds) - height));
++            label.frame = CGRectMake(x, y, width, height);
++        } else {
++            label.string = [NSString stringWithFormat:@"x: %.1f\ny: %.1f", marker.location.x, marker.location.y];
++            label.fontSize = 10;
++            label.wrapped = NO;
++            label.backgroundColor = NULL;
++            label.frame = CGRectMake(center.x - 55, center.y - radius - STConfig.shadowRadius - 28, 110, 28);
++        }
+         if (label.superlayer != window.layer) [window.layer addSublayer:label];
+     } else {
+         [label removeFromSuperlayer];
+@@ -232,6 +317,8 @@
+ }
+ 
+ static void STRenderTouches(NSDictionary<NSValue *, P9ShowTouchSample *> *samples) {
++    // Query after original dispatch: opening an app can change foreground owner.
++    STTouchOwnership owner = STCurrentOwnership();
+     [CATransaction begin];
+     [CATransaction setDisableActions:YES];
+ 
+@@ -242,14 +329,13 @@
+         P9ShowTouchSample *sample = samples[key];
+         if (!sample || !sample.touch || !sample.window ||
+             marker.touch != sample.touch || marker.window != sample.window ||
+-            sample.touch.window != sample.window ||
+-            !STShouldDisplay(sample.window)) STRemoveKey(key);
++            !STMayDrawTouch(sample.touch, sample.window, owner)) STRemoveKey(key);
+     }
+     for (NSValue *key in samples) {
+         P9ShowTouchSample *sample = samples[key];
+         UITouch *touch = sample.touch;
+         UIWindow *window = sample.window;
+-        if (!touch || touch.window != window || !STShouldDisplay(window)) continue;
++        if (!STMayDrawTouch(touch, window, owner)) continue;
+         STTouchMarker *marker = STMarkers[key];
+         if (!marker) {
+             marker = [STTouchMarker new];
+@@ -309,6 +395,7 @@
+ }
+ 
+ __attribute__((constructor)) static void STInitialize(void) {
++    STSpringBoardProcess = [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"];
+     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    STPreferencesChanged, STPrefsChanged, NULL,
+                                    CFNotificationSuspensionBehaviorDeliverImmediately);

@@ -1,0 +1,11 @@
+PASS ShowTouch.dylib: arm64, iOS 14.0, signature hashes verified
+PASS ShowTouch.dylib: arm64e (subtype 0x00000002), iOS 14.0, signature hashes verified
+PASS showtouch: arm64, iOS 14.0, signature hashes verified
+PASS showtouch: arm64e (subtype 0x00000002), iOS 14.0, signature hashes verified
+PASS CCToggle: arm64, iOS 14.0, signature hashes verified
+PASS CCToggle: arm64e (subtype 0x00000002), iOS 14.0, signature hashes verified
+PASS: 13 original controls/defaults and optional renderer diagnostics; exported native classes; no Swift or Orion
+Package: com.p-x9.showtouch
+Version: 0.3.7
+Architecture: iphoneos-arm
+Depends: mobilesubstrate, firmware (>= 14.0), firmware (<< 15.0)

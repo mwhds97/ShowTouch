@@ -9,7 +9,7 @@
 		<key>cell</key>
 		<string>PSLinkCell</string>
 		<key>detail</key>
-		<string>showtouch.RootListController</string>
+		<string>P9ShowTouchRootListController</string>
 		<key>icon</key>
 		<string>icon.png</string>
 		<key>isController</key>

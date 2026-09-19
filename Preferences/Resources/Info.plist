@@ -13,12 +13,14 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>0.3.7</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>1.0</string>
+	<string>0.3.7</string>
 	<key>NSPrincipalClass</key>
-	<string>showtouch.RootListController</string>
+	<string>P9ShowTouchRootListController</string>
+	<key>MinimumOSVersion</key>
+	<string>14.0</string>
 </dict>
 </plist>

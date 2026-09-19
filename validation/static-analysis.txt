@@ -1,0 +1,1 @@
+PASS: Clang static analysis, arm64e/iOS 14; runtime and preference storage; zero diagnostics.
